@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Tidepool</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@400;600;800&display=swap">
+<style>
+:root{--bg:#E4F3F0;--ink:#0A2B34;--mut:#4A6C74;--line:#B7D8D2;--chip:#CFE8E3;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);color-scheme:light}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#061A20;--ink:#DDF3EF;--mut:#8FB4B6;--line:#1B3E47;--chip:#0E2B33;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#061A20;--ink:#DDF3EF;--mut:#8FB4B6;--line:#1B3E47;--chip:#0E2B33;color-scheme:dark}
+html{scroll-padding-top:env(safe-area-inset-top,0px);height:100%}
+*,*::before,*::after{box-sizing:inherit}
+body{margin:0;min-height:100%;background:var(--bg);color:var(--ink);font:16px/1.5 "Bricolage Grotesque",system-ui,-apple-system,"Segoe UI",sans-serif;display:flex;flex-direction:column}
+main{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:14px 16px}
+header{width:min(100%,480px);display:flex;justify-content:space-between;align-items:center;gap:12px}
+h1{margin:0;font-size:1.7rem;font-weight:800;letter-spacing:-.03em;line-height:1}
+.stats{display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-end}
+.chip{background:var(--chip);border-radius:999px;padding:4px 12px;font-size:.88rem;color:var(--mut);white-space:nowrap}
+.chip b{color:var(--ink);font-weight:800;font-variant-numeric:tabular-nums;margin-left:4px}
+#lv{color:#E8503F;letter-spacing:2px}
+.stage{position:relative;width:min(100%,480px,calc((100dvh - 210px)*.75));min-width:260px}
+canvas{display:block;width:100%;aspect-ratio:3/4;border-radius:20px;touch-action:none;cursor:crosshair;background:#06303A}
+.ov{position:absolute;inset:0;border-radius:20px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:10px;padding:24px;background:rgba(3,22,29,.72);color:#E9FFFB}
+.ov[hidden]{display:none}
+.ov h2{margin:0;font-size:2.3rem;font-weight:800;letter-spacing:-.03em;line-height:1.05}
+.ov p{margin:0;max-width:30ch;color:#B9DCD8}
+.btn{font:inherit;font-weight:800;border:0;border-radius:999px;padding:12px 28px;margin-top:8px;background:#FF6B5E;color:#1A0805;cursor:pointer}
+.btn:hover{background:#FF8174}
+.btn:focus-visible,.mute:focus-visible{outline:3px solid #F2D8A7;outline-offset:3px}
+.mute{font:inherit;font-size:.88rem;border:0;border-radius:999px;padding:4px 12px;background:var(--chip);color:var(--mut);cursor:pointer}
+.hint{margin:0;font-size:.88rem;color:var(--mut);text-align:center;max-width:46ch}
+footer{padding:14px 16px;text-align:center;border-top:1px solid var(--line);color:var(--mut);font-size:.92rem}
+footer b{color:var(--ink);font-weight:800}
+</style>
+</head>
+<body>
+<main>
+<header>
+<h1>Tidepool</h1>
+<div class="stats">
+<span class="chip">Score<b id="sc">0</b></span>
+<span class="chip">Best<b id="bs">0</b></span>
+<span class="chip" aria-label="Lives"><b id="lv" style="margin:0">♥♥♥</b></span>
+<button class="mute" id="mu" type="button">Sound on</button>
+</div>
+</header>
+<div class="stage">
+<canvas id="c" width="480" height="640" aria-label="Tidepool game"></canvas>
+<div class="ov" id="ov">
+<h2 id="ot">Tidepool</h2>
+<p id="ob">Swim your jellyfish to the glowing plankton. Dodge the sea urchins.</p>
+<button class="btn" id="go" type="button">Start swimming</button>
+</div>
+</div>
+<p class="hint">Move your mouse or drag a finger to swim. Arrow keys or WASD also work. Press P or Space to pause. Bubbles give a 6 second shield.</p>
+</main>
+<footer>Made By <b>Aarav</b></footer>
+<script>
+(function(){
+var cv=document.getElementById("c"),ctx=cv.getContext("2d"),W=480,H=640;
+function $(i){return document.getElementById(i)}
+var best=0;try{best=+localStorage.getItem("tidepool-best")||0}catch(e){}
+var calm=window.matchMedia&&matchMedia("(prefers-reduced-motion: reduce)").matches;
+var mode="ready",t=0,bg=0,score=0,lives=3,combo=0,shield=0,inv=0,shake=0,last=0,muted=false;
+var P,ur,pl,bu,pa,spU,spP,spB,keys={};
+var amb=[];for(var i=0;i<16;i++)amb.push({x:Math.random()*W,s:10+Math.random()*20,o:Math.random()*700,r:2+Math.random()*4});
+var ac;
+function beep(f,d,ty,v){if(muted)return;try{ac=ac||new(window.AudioContext||window.webkitAudioContext)();var o=ac.createOscillator(),g=ac.createGain();o.type=ty||"sine";o.frequency.value=f;g.gain.setValueAtTime(v||.05,ac.currentTime);g.gain.exponentialRampToValueAtTime(.001,ac.currentTime+(d||.08));o.connect(g);g.connect(ac.destination);o.start();o.stop(ac.currentTime+(d||.08))}catch(e){}}
+function reset(){P={x:W/2,y:H*.78,tx:W/2,ty:H*.78,r:15,ph:0};ur=[];pl=[];bu=[];pa=[];t=0;score=0;lives=3;combo=0;shield=0;inv=0;shake=0;spU=.8;spP=.4;spB=10;hud()}
+function hud(){$("sc").textContent=score;$("bs").textContent=best;var h="";for(var i=0;i<3;i++)h+=i<lives?"♥":"♡";$("lv").textContent=h}
+function burst(x,y,c,n){for(var i=0;i<n;i++){var a=Math.random()*6.283,s=40+Math.random()*140;pa.push({x:x,y:y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,l:.5+Math.random()*.4,c:c})}}
+function mult(){return Math.min(5,1+Math.floor(combo/5))}
+function setT(e){var r=cv.getBoundingClientRect();P.tx=(e.clientX-r.left)/r.width*W;P.ty=(e.clientY-r.top)/r.height*H-(e.pointerType==="touch"?44:0)}
+cv.addEventListener("pointermove",function(e){if(mode==="play")setT(e)});
+cv.addEventListener("pointerdown",function(e){if(mode==="play")setT(e)});
+function show(ti,bo,bt){$("ot").textContent=ti;$("ob").textContent=bo;$("go").textContent=bt;$("ov").hidden=false}
+function start(){reset();mode="play";$("ov").hidden=true;beep(440,.12)}
+function pause(){if(mode==="play"){mode="pause";show("Paused","Take a breath. The tide will wait.","Resume")}}
+function resume(){if(mode==="pause"){mode="play";$("ov").hidden=true}}
+function over(){mode="over";var nb=score>best;if(nb){best=score;try{localStorage.setItem("tidepool-best",String(best))}catch(e){}}hud();show("Game over","You scored "+score+(nb?". That is a new best!":". Best is "+best+"."),"Swim again")}
+function hit(){lives--;combo=0;inv=1.4;shake=calm?0:9;burst(P.x,P.y,"#FF6B5E",16);beep(140,.28,"sawtooth",.07);hud();if(lives<=0)over()}
+$("go").addEventListener("click",function(){this.blur();if(mode==="pause")resume();else start()});
+$("mu").addEventListener("click",function(){muted=!muted;this.textContent=muted?"Sound off":"Sound on";this.blur()});
+addEventListener("keydown",function(e){var k=e.key.toLowerCase(),onBtn=e.target&&e.target.tagName==="BUTTON";
+if(["arrowup","arrowdown","arrowleft","arrowright"," "].indexOf(k)>-1&&!onBtn)e.preventDefault();
+if(k==="p"||k==="escape"||(k===" "&&!onBtn)){if(mode==="play")pause();else if(mode==="pause")resume();else if(k===" ")start();return}
+if(k==="enter"&&!onBtn&&(mode==="ready"||mode==="over")){start();return}
+keys[k]=1});
+addEventListener("keyup",function(e){delete keys[e.key.toLowerCase()]});
+document.addEventListener("visibilitychange",function(){if(document.hidden)pause()});
+function upd(dt){
+t+=dt;
+var kx=(keys.arrowright||keys.d?1:0)-(keys.arrowleft||keys.a?1:0),ky=(keys.arrowdown||keys.s?1:0)-(keys.arrowup||keys.w?1:0);
+P.tx+=kx*380*dt;P.ty+=ky*380*dt;
+P.tx=Math.max(P.r,Math.min(W-P.r,P.tx));P.ty=Math.max(60,Math.min(H-P.r-8,P.ty));
+var k=1-Math.pow(.0006,dt);P.x+=(P.tx-P.x)*k;P.y+=(P.ty-P.y)*k;P.ph+=dt*6;
+inv=Math.max(0,inv-dt);shield=Math.max(0,shield-dt);shake=Math.max(0,shake-dt*30);
+var lv=Math.min(t,120);
+if((spU-=dt)<=0){spU=Math.max(.3,1-lv*.006)*(.7+Math.random()*.6);var r=13+Math.random()*12;ur.push({x:r+Math.random()*(W-2*r),y:-r,r:r,vy:90+lv*1.6+Math.random()*50,a:0,w:Math.random()*6,dx:20+Math.random()*30})}
+if((spP-=dt)<=0){spP=.55+Math.random()*.5;pl.push({x:20+Math.random()*(W-40),y:-10,r:7,vy:70+lv*.6,w:Math.random()*6})}
+if((spB-=dt)<=0){spB=14+Math.random()*8;bu.push({x:30+Math.random()*(W-60),y:-14,r:13,vy:60})}
+var i,o,d;
+for(i=ur.length-1;i>=0;i--){o=ur[i];o.y+=o.vy*dt;o.x+=Math.sin(t*1.5+o.w)*o.dx*dt;o.a+=dt;
+d=Math.hypot(o.x-P.x,o.y-P.y);
+if(d<o.r*.95+P.r*.7){if(shield>0){score+=15;burst(o.x,o.y,"#F2D8A7",14);beep(300,.1,"square",.04);ur.splice(i,1);hud();continue}
+else if(inv<=0){hit();if(mode==="over")return}}
+if(o.y>H+40)ur.splice(i,1)}
+for(i=pl.length-1;i>=0;i--){o=pl[i];o.y+=o.vy*dt;o.x+=Math.sin(t*2+o.w)*18*dt;
+if(Math.hypot(o.x-P.x,o.y-P.y)<o.r+P.r+4){combo++;score+=10*mult();burst(o.x,o.y,"#F2D8A7",8);beep(520+Math.min(combo,20)*30,.09);pl.splice(i,1);hud();continue}
+if(o.y>H+10)pl.splice(i,1)}
+for(i=bu.length-1;i>=0;i--){o=bu[i];o.y+=o.vy*dt;o.x+=Math.sin(t*2)*20*dt;
+if(Math.hypot(o.x-P.x,o.y-P.y)<o.r+P.r){shield=6;burst(o.x,o.y,"#BFF6F0",14);beep(760,.2,"triangle",.06);bu.splice(i,1);continue}
+if(o.y>H+20)bu.splice(i,1)}
+for(i=pa.length-1;i>=0;i--){o=pa[i];o.x+=o.vx*dt;o.y+=o.vy*dt;o.vx*=.96;o.vy*=.96;o.l-=dt;if(o.l<=0)pa.splice(i,1)}
+}
+function jelly(){
+var r=P.r,pul=1+Math.sin(P.ph)*.07,i,j;
+ctx.save();ctx.translate(P.x,P.y);
+if(inv>0&&Math.floor(bg*18)%2)ctx.globalAlpha=.35;
+ctx.strokeStyle="rgba(242,216,167,.85)";ctx.lineWidth=2.2;ctx.lineCap="round";
+for(i=-2;i<=2;i++){ctx.beginPath();ctx.moveTo(i*5,r*.35);for(j=1;j<=6;j++)ctx.lineTo(i*5+Math.sin(P.ph*.8+j*.9+i)*3.5,r*.35+j*5.5);ctx.stroke()}
+var g=ctx.createRadialGradient(0,-r*.4,2,0,0,r*1.4);g.addColorStop(0,"#E9FFFB");g.addColorStop(1,"#4FD0C2");
+ctx.fillStyle=g;ctx.beginPath();ctx.moveTo(-r*pul,r*.4);ctx.quadraticCurveTo(-r*pul,-r*1.3,0,-r*1.3);ctx.quadraticCurveTo(r*pul,-r*1.3,r*pul,r*.4);ctx.quadraticCurveTo(0,r*.1,-r*pul,r*.4);ctx.fill();
+ctx.fillStyle="#0A3A44";ctx.beginPath();ctx.arc(-4,-3,1.8,0,7);ctx.arc(4,-3,1.8,0,7);ctx.fill();
+if(shield>0&&(shield>1.5||Math.floor(bg*10)%2)){ctx.globalAlpha=1;ctx.strokeStyle="#F2D8A7";ctx.lineWidth=2.5;ctx.beginPath();ctx.arc(0,-r*.2,r+12,0,7);ctx.stroke()}
+ctx.restore()}
+function draw(){
+var i,o,g;
+ctx.save();
+if(shake>0)ctx.translate((Math.random()-.5)*shake,(Math.random()-.5)*shake);
+g=ctx.createLinearGradient(0,0,0,H);g.addColorStop(0,"#127086");g.addColorStop(1,"#041C25");ctx.fillStyle=g;ctx.fillRect(-10,-10,W+20,H+20);
+ctx.fillStyle="rgba(190,255,245,.06)";
+for(i=0;i<4;i++){var x=60+i*130+Math.sin(bg*.3+i)*30,sw=Math.sin(bg*.4+i)*40;ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x+60,0);ctx.lineTo(x+20-i*20+sw,H);ctx.lineTo(x-80+sw,H);ctx.fill()}
+ctx.strokeStyle="rgba(200,255,250,.25)";ctx.lineWidth=1;
+for(i=0;i<amb.length;i++){o=amb[i];ctx.beginPath();ctx.arc(o.x+Math.sin(bg+o.o)*8,H+20-((bg*o.s+o.o)%(H+40)),o.r,0,7);ctx.stroke()}
+ctx.fillStyle="#06303A";ctx.beginPath();ctx.moveTo(0,H);for(i=0;i<=W;i+=20)ctx.lineTo(i,H-26+Math.sin(i*.03)*8);ctx.lineTo(W,H);ctx.fill();
+ctx.fillStyle="rgba(242,216,167,.85)";ctx.fillRect(0,H-9,W,9);
+ctx.fillStyle="rgba(255,107,94,.55)";for(i=0;i<7;i++){ctx.beginPath();ctx.arc(30+i*72,H-14+Math.sin(i*2)*4,6+(i%3)*2,Math.PI,0);ctx.fill()}
+for(i=0;i<pl.length;i++){o=pl[i];ctx.fillStyle="rgba(242,216,167,.22)";ctx.beginPath();ctx.arc(o.x,o.y,o.r*2.2,0,7);ctx.fill();ctx.fillStyle="#F2D8A7";ctx.beginPath();ctx.arc(o.x,o.y,o.r,0,7);ctx.fill()}
+for(i=0;i<bu.length;i++){o=bu[i];ctx.fillStyle="rgba(191,246,240,.18)";ctx.strokeStyle="#BFF6F0";ctx.lineWidth=2;ctx.beginPath();ctx.arc(o.x,o.y,o.r,0,7);ctx.fill();ctx.stroke();ctx.fillStyle="#fff";ctx.beginPath();ctx.arc(o.x-4,o.y-4,2.5,0,7);ctx.fill()}
+for(i=0;i<ur.length;i++){o=ur[i];ctx.save();ctx.translate(o.x,o.y);ctx.rotate(o.a);ctx.strokeStyle="#FF6B5E";ctx.lineWidth=2.5;ctx.lineCap="round";
+for(var j=0;j<12;j++){var a=j/12*6.283,c=Math.cos(a),s=Math.sin(a);ctx.beginPath();ctx.moveTo(c*o.r*.7,s*o.r*.7);ctx.lineTo(c*o.r*1.15,s*o.r*1.15);ctx.stroke()}
+ctx.fillStyle="#2A1740";ctx.beginPath();ctx.arc(0,0,o.r*.8,0,7);ctx.fill();ctx.restore()}
+if(mode!=="over")jelly();
+for(i=0;i<pa.length;i++){o=pa[i];ctx.globalAlpha=Math.max(0,o.l*1.6);ctx.fillStyle=o.c;ctx.beginPath();ctx.arc(o.x,o.y,2.6,0,7);ctx.fill()}
+ctx.globalAlpha=1;
+ctx.font='800 18px "Bricolage Grotesque",system-ui,sans-serif';ctx.textBaseline="top";
+if(mode==="play"||mode==="pause"){
+if(mult()>1){ctx.fillStyle="#F2D8A7";ctx.textAlign="left";ctx.fillText("Combo ×"+mult(),14,12)}
+if(shield>0){ctx.fillStyle="rgba(191,246,240,.25)";ctx.fillRect(W-114,16,100,8);ctx.fillStyle="#BFF6F0";ctx.fillRect(W-114,16,100*shield/6,8)}}
+ctx.restore()}
+function loop(ts){var dt=Math.min(.05,(ts-last)/1000||0);last=ts;bg+=dt;if(mode==="play")upd(dt);draw();requestAnimationFrame(loop)}
+reset();requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
